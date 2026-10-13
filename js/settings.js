@@ -7,7 +7,8 @@ const Settings = (() => {
     filter: 'color',        // look applied to new pages
     pageSize: 'a4',         // 'a4' | 'letter' | 'fit'
     reviewEachScan: true,   // show the corner editor after every photo
-    autoCapture: false      // take the photo automatically when the page is held steady
+    autoCapture: false,     // take the photo automatically when the page is held steady
+    ocr: true               // make PDFs searchable (read the text with OCR)
   };
   let current = { ...DEFAULTS };
 
@@ -70,6 +71,11 @@ const Settings = (() => {
             ${segmented('set-size', PdfExport.PAGE_SIZES, s.pageSize)}
             <div class="hint">"Fit" makes each PDF page exactly the shape of the scan.</div>
           </div>
+          <div class="field">
+            <label class="switch-row"><span>Make text searchable</span>
+              <input type="checkbox" id="set-ocr" ${s.ocr ? 'checked' : ''}></label>
+            <div class="hint">Reads the text on each page (OCR, works offline) so PDFs can be searched and text copied. Also switchable when saving.</div>
+          </div>
         </div>
 
         <div class="section-title">About</div>
@@ -93,6 +99,7 @@ const Settings = (() => {
     wireSegmented('set-size', 'pageSize');
     document.getElementById('set-review').addEventListener('change', e => save({ reviewEachScan: e.target.checked }));
     document.getElementById('set-auto').addEventListener('change', e => save({ autoCapture: e.target.checked }));
+    document.getElementById('set-ocr').addEventListener('change', e => save({ ocr: e.target.checked }));
   }
 
   return { load, get, save, render };

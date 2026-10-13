@@ -15,6 +15,7 @@ const Docs = (() => {
     left: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
     right: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>',
+    text: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>',
     photos: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
     pdf: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9 15l3 3 3-3"/></svg>'
   };
@@ -285,6 +286,35 @@ const Docs = (() => {
     return flat;
   }
 
+  /** Show a page's text with a Copy button. */
+  async function showText(text) {
+    if (!text.trim()) {
+      await Utils.alert('No text found', 'No readable text was found on this page. Try the B&W look or re-crop the page, then try again.');
+      return;
+    }
+    await Utils.modal({
+      title: 'Page text',
+      bodyHtml: `<textarea class="ocr-text" readonly>${Utils.esc(text)}</textarea>
+        <div class="hint small muted">Read automatically – check names and numbers before relying on them.</div>`,
+      buttons: [
+        { label: 'Close', value: null },
+        { label: 'Copy', value: 'copy', className: 'primary' }
+      ],
+      getValue: el => {
+        const ta = el.querySelector('textarea');
+        const done = () => Utils.toast('Text copied');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, () => { ta.select(); document.execCommand('copy'); done(); });
+        } else {
+          ta.select();
+          document.execCommand('copy');
+          done();
+        }
+        return 'copied';
+      }
+    });
+  }
+
   async function renderPage(docId, pageId) {
     const doc = await DB.get('docs', docId);
     if (!doc) return App.notFound('scan');
@@ -323,6 +353,7 @@ const Docs = (() => {
             <button type="button" class="btn" id="pg-earlier" ${index === 0 ? 'disabled' : ''}>Move earlier</button>
             <button type="button" class="btn" id="pg-later" ${index === pages.length - 1 ? 'disabled' : ''}>Move later</button>
           </div>
+          <button type="button" class="btn block mt" id="pg-text">${ICONS.text}Copy text</button>
         </div>
         <button type="button" class="btn danger block" id="pg-delete">${ICONS.trash}Delete page</button>`
     });
@@ -332,7 +363,7 @@ const Docs = (() => {
 
     /** Re-render this page with changed settings and save it. */
     async function update(changes, message) {
-      const next = { ...page, ...changes };
+      const next = { ...page, ...changes, ocr: null };   // image changes, so its text must be read again
       Utils.showLoading(message);
       try {
         await Utils.nextFrame();
@@ -382,6 +413,26 @@ const Docs = (() => {
       Utils.freeCanvas(src);
       if (res === 'cancel') return;
       update({ corners: res.corners }, 'Flattening…');
+    });
+
+    document.getElementById('pg-text').addEventListener('click', async () => {
+      if (!Ocr.hasText(page)) {
+        Utils.showLoading('Starting text reader…');
+        try {
+          await Utils.nextFrame();
+          [page] = await Ocr.ensure([page], (i, n, f) =>
+            Utils.updateLoading(`Reading text…${f ? ` ${Math.round(f * 100)}%` : ''}`));
+        } catch (err) {
+          console.error(err);
+          Utils.hideLoading();
+          await Utils.alert('Could not read the text', err.message || String(err));
+          return;
+        } finally {
+          Ocr.release();
+        }
+        Utils.hideLoading();
+      }
+      showText(page.ocr.text);
     });
 
     async function move(dir) {

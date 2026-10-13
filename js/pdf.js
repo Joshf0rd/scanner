@@ -6,6 +6,8 @@
                    portrait or landscape to match the scan
      fit         – each PDF page is exactly the shape of the scan
    The finished JPEG of each page is embedded as-is (no re-compression).
+   With "Make text searchable" on, each page's OCR text (js/ocr.js) is
+   placed invisibly over the image, so the PDF can be searched and copied.
    ========================================================= */
 
 const PdfExport = (() => {
@@ -16,10 +18,13 @@ const PdfExport = (() => {
   ];
   const PAPER_MM = { a4: [210, 297], letter: [215.9, 279.4] };
 
-  /** Build the PDF Blob. onProgress(i, total) is called per page. */
-  async function build(doc, pageSize, onProgress) {
+  /**
+   * Build the PDF Blob. onProgress(i, total) is called per page.
+   * `pages` (optional) – already-loaded pages, e.g. after OCR; `searchable` adds the text layer.
+   */
+  async function build(doc, pageSize, onProgress, { pages = null, searchable = false } = {}) {
     if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('The PDF library did not load. Reopen the app and try again.');
-    const pages = await DB.getPages(doc);
+    pages = pages || await DB.getPages(doc);
     if (!pages.length) throw new Error('This document has no pages yet.');
 
     let pdf = null;
@@ -50,6 +55,7 @@ const PdfExport = (() => {
       const s = Math.min(pw / page.width, ph / page.height);
       const w = page.width * s, h = page.height * s;
       pdf.addImage(bytes, 'JPEG', (pw - w) / 2, (ph - h) / 2, w, h, 'p' + i, 'NONE');
+      if (searchable && Ocr.hasText(page)) Ocr.addTextLayer(pdf, page.ocr, (pw - w) / 2, (ph - h) / 2, s);
       await Utils.nextFrame();   // keep the screen responsive
     }
     pdf.setProperties({ title: doc.name, creator: 'Scanner' });
@@ -62,6 +68,8 @@ const PdfExport = (() => {
    */
   async function exportDoc(doc) {
     let size = Settings.get().pageSize;
+    const pagesNow = await DB.getPages(doc);
+    const unread = pagesNow.filter(p => !Ocr.hasText(p)).length;
     const result = await Utils.modal({
       title: 'Save as PDF',
       bodyHtml: `
@@ -69,7 +77,14 @@ const PdfExport = (() => {
           <div class="input-suffix"><input type="text" id="pdf-name" value="${Utils.esc(doc.name)}" autocomplete="off" enterkeyhint="done"><span>.pdf</span></div></div>
         <div class="field"><span class="label">Page size</span>
           <div class="segmented" id="pdf-size">${PAGE_SIZES.map(o =>
-            `<button type="button" data-value="${o.value}" class="${o.value === size ? 'active' : ''}">${Utils.esc(o.label)}</button>`).join('')}</div></div>`,
+            `<button type="button" data-value="${o.value}" class="${o.value === size ? 'active' : ''}">${Utils.esc(o.label)}</button>`).join('')}</div></div>
+        <div class="field">
+          <label class="switch-row"><span>Make text searchable</span>
+            <input type="checkbox" id="pdf-ocr" ${Settings.get().ocr ? 'checked' : ''}></label>
+          <div class="hint">${unread
+            ? `Reads the text on ${unread === pagesNow.length ? 'each page' : `${unread} new or changed page${unread === 1 ? '' : 's'}`} (a few seconds per page) so you can search and copy it in the PDF.`
+            : 'Text already read – this is quick.'}</div>
+        </div>`,
       buttons: [
         { label: 'Cancel', value: null },
         { label: 'Create PDF', value: 'ok', className: 'primary' }
@@ -91,10 +106,11 @@ const PdfExport = (() => {
           input.focus();
           return undefined;
         }
-        return { name, size };
+        return { name, size, ocr: el.querySelector('#pdf-ocr').checked };
       }
     });
     if (!result) return doc;
+    if (result.ocr !== Settings.get().ocr) await Settings.save({ ocr: result.ocr });
 
     if (result.name !== doc.name) {
       doc = { ...doc, name: result.name, modifiedAt: Utils.nowStamp() };
@@ -105,8 +121,20 @@ const PdfExport = (() => {
     Utils.showLoading('Creating PDF…');
     try {
       await Utils.nextFrame();
-      blob = await build(doc, result.size, (i, n) => Utils.updateLoading(`Creating PDF… page ${i} of ${n}`));
+      let pages = await DB.getPages(doc);
+      if (result.ocr && pages.some(p => !Ocr.hasText(p))) {
+        Utils.updateLoading('Starting text reader…');
+        try {
+          pages = await Ocr.ensure(pages, (i, n, f) =>
+            Utils.updateLoading(`Reading text… page ${i} of ${n}${f ? ` (${Math.round(f * 100)}%)` : ''}`));
+        } finally {
+          Ocr.release();
+        }
+      }
+      blob = await build(doc, result.size, (i, n) => Utils.updateLoading(`Creating PDF… page ${i} of ${n}`),
+        { pages, searchable: result.ocr });
     } catch (err) {
+      Ocr.release();
       Utils.hideLoading();
       console.error(err);
       await Utils.alert('PDF failed', err.message || String(err));

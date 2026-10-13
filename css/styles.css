@@ -313,6 +313,10 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color:
   border: 1px solid var(--border-strong); border-radius: var(--radius); font-weight: 600; cursor: pointer;
 }
 .modal .choice input { width: 20px; height: 20px; accent-color: var(--accent); }
+.ocr-text {
+  width: 100%; height: 45vh; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px;
+  font: inherit; font-size: 16px; line-height: 1.4; color: var(--text); background: #fff; resize: none;
+}
 .sheet-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 
 /* ---------- Toast ---------- */
